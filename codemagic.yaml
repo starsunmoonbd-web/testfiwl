@@ -13,19 +13,23 @@ workflows:
       - name: Check project ZIP
         script: |
           set -e
+
           echo "Current directory:"
           pwd
+
           echo "Repository files:"
           ls -lah
-          test -f "LiveTV_Codemagic_ZIP_Builder.zip"
+
+          test -f "LiveTV_Codemagic_FIXED_v2.zip"
 
       - name: Extract project ZIP
         script: |
           set -e
+
           rm -rf builder
           mkdir -p builder
 
-          unzip -q "LiveTV_Codemagic_ZIP_Builder.zip" -d builder
+          unzip -q "LiveTV_Codemagic_FIXED_v2.zip" -d builder
 
           echo "Extracted files:"
           find builder -maxdepth 2 -type f -print
