@@ -1,44 +1,56 @@
 workflows:
   android-debug:
     name: LiveTV Android APK
-    max_build_duration: 120
+    max_build_duration: 60
     instance_type: mac_mini_m2
 
     environment:
       vars:
         LIVE_TV_BASE_URL: "https://sojib247.iceiy.com/"
-        LIVE_TV_API_KEY: $LIVE_TV_API_KEY
+      groups:
+        - livetv_secrets
 
     scripts:
-      - name: Check project ZIP
+      - name: Check Android project
         script: |
-          set -e
+          echo "Checking Android project..."
+          test -f settings.gradle.kts
+          test -f build.gradle.kts
+          test -f app/build.gradle.kts
+          test -f app/src/main/AndroidManifest.xml
+          echo "Project structure OK"
 
-          echo "Current directory:"
-          pwd
-
-          echo "Repository files:"
-          ls -lah
-
-          test -f "LiveTV_GitHub_CodeMagic_Clean.zip"
-
-      - name: Extract project ZIP
+      - name: Configure Android SDK
         script: |
-          set -e
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > "$CM_BUILD_DIR/local.properties"
+          cat "$CM_BUILD_DIR/local.properties"
 
-          rm -rf builder
-          mkdir -p builder
+      - name: Check API key
+        script: |
+          if [ -z "$LIVE_TV_API_KEY" ]; then
+            echo "ERROR: LIVE_TV_API_KEY is missing."
+            echo "Add LIVE_TV_API_KEY to Codemagic environment variable group: livetv_secrets"
+            exit 1
+          fi
+          echo "API key detected"
 
-          unzip -q "LiveTV_GitHub_CodeMagic_Clean.zip" -d builder
+      - name: Make Gradle executable
+        script: |
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          fi
 
-          echo "Extracted files:"
-          find builder -maxdepth 2 -type f -print
-
-          test -f "builder/build.sh"
-
-          cd builder
-          chmod +x build.sh
-          bash build.sh
+      - name: Build Debug APK
+        script: |
+          if [ -f "./gradlew" ]; then
+            ./gradlew --no-daemon --stacktrace assembleDebug \
+              -PLIVE_TV_BASE_URL="$LIVE_TV_BASE_URL" \
+              -PLIVE_TV_API_KEY="$LIVE_TV_API_KEY"
+          else
+            gradle --no-daemon --stacktrace assembleDebug \
+              -PLIVE_TV_BASE_URL="$LIVE_TV_BASE_URL" \
+              -PLIVE_TV_API_KEY="$LIVE_TV_API_KEY"
+          fi
 
     artifacts:
-      - builder/extracted/app/build/outputs/**/*.apk
+      - app/build/outputs/apk/debug/*.apk
