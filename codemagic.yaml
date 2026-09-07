@@ -1,0 +1,95 @@
+workflows:
+  android-debug:
+    name: LiveTV Android APK
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+
+    environment:
+      vars:
+        LIVE_TV_BASE_URL: "https://sojib247.iceiy.com/"
+      groups:
+        - livetv_secrets
+
+    scripts:
+      - name: Locate Android project
+        script: |
+          set -e
+
+          if [ -f "$CM_BUILD_DIR/settings.gradle.kts" ] || [ -f "$CM_BUILD_DIR/settings.gradle" ]; then
+            export PROJECT_DIR="$CM_BUILD_DIR"
+          elif [ -f "$CM_BUILD_DIR/builder/settings.gradle.kts" ] || [ -f "$CM_BUILD_DIR/builder/settings.gradle" ]; then
+            export PROJECT_DIR="$CM_BUILD_DIR/builder"
+          else
+            echo "ERROR: Android Gradle project not found."
+            echo "Contents of $CM_BUILD_DIR:"
+            find "$CM_BUILD_DIR" -maxdepth 2 -type f | sort
+            exit 1
+          fi
+
+          echo "PROJECT_DIR=$PROJECT_DIR"
+          echo "CM_BUILD_DIR=$CM_BUILD_DIR"
+
+          # Persist PROJECT_DIR for later scripts.
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$CM_ENV"
+
+      - name: Check Android project
+        script: |
+          set -e
+          cd "$PROJECT_DIR"
+
+          test -f settings.gradle.kts || test -f settings.gradle
+          test -f build.gradle.kts || test -f build.gradle
+          test -f app/build.gradle.kts || test -f app/build.gradle
+          test -f app/src/main/AndroidManifest.xml
+
+          echo "Android project OK:"
+          pwd
+          ls -la
+
+      - name: Configure Android SDK
+        script: |
+          set -e
+          cd "$PROJECT_DIR"
+          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
+          cat local.properties
+
+      - name: Check API key
+        script: |
+          set -e
+          if [ -z "$LIVE_TV_API_KEY" ]; then
+            echo "ERROR: LIVE_TV_API_KEY is missing."
+            exit 1
+          fi
+          echo "API key detected."
+
+      - name: Make Gradle executable
+        script: |
+          set -e
+          cd "$PROJECT_DIR"
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+          fi
+
+      - name: Build Debug APK
+        script: |
+          set -e
+          cd "$PROJECT_DIR"
+
+          echo "Building from:"
+          pwd
+          echo "Gradle files:"
+          ls -la settings.gradle* build.gradle* app/build.gradle*
+
+          if [ -f "./gradlew" ]; then
+            ./gradlew --no-daemon --stacktrace assembleDebug \
+              -PLIVE_TV_BASE_URL="$LIVE_TV_BASE_URL" \
+              -PLIVE_TV_API_KEY="$LIVE_TV_API_KEY"
+          else
+            gradle --no-daemon --stacktrace assembleDebug \
+              -PLIVE_TV_BASE_URL="$LIVE_TV_BASE_URL" \
+              -PLIVE_TV_API_KEY="$LIVE_TV_API_KEY"
+          fi
+
+    artifacts:
+      - builder/app/build/outputs/apk/debug/*.apk
+      - app/build/outputs/apk/debug/*.apk
