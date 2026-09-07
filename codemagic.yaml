@@ -2,137 +2,58 @@ workflows:
   android-debug:
     name: LiveTV Android APK
     max_build_duration: 60
-    instance_type: mac_mini_m2
 
     environment:
-      vars:
-        LIVE_TV_BASE_URL: "https://sojib247.iceiy.com/"
       groups:
         - livetv_secrets
+      vars:
+        LIVE_TV_BASE_URL: "https://sojib247.iceiy.com/"
+      android_signing:
+        - debug_keystore
 
     scripts:
-
-      - name: Extract project ZIP
+      - name: Check API configuration
         script: |
-          set -e
-
-          ZIP_FILE="$(find "$CM_BUILD_DIR" -maxdepth 1 -type f -name '*.zip' | head -n 1)"
-
-          if [ -z "$ZIP_FILE" ]; then
-            echo "ERROR: No project ZIP found"
-            ls -la "$CM_BUILD_DIR"
+          echo "Checking API configuration..."
+          
+          if [ -z "$LIVE_TV_API_KEY" ]; then
+            echo "ERROR: LIVE_TV_API_KEY is missing"
             exit 1
           fi
-
-          echo "Using ZIP: $ZIP_FILE"
-
-          PROJECT_DIR="$CM_BUILD_DIR/builder"
-
-          rm -rf "$PROJECT_DIR"
-          mkdir -p "$PROJECT_DIR"
-
-          unzip -q "$ZIP_FILE" -d "$PROJECT_DIR"
-
-          echo "Extracted project:"
-          find "$PROJECT_DIR" -maxdepth 3 -type f | sort
-
-          if [ -f "$PROJECT_DIR/settings.gradle.kts" ] || [ -f "$PROJECT_DIR/settings.gradle" ]; then
-            FINAL_PROJECT_DIR="$PROJECT_DIR"
-          else
-            SETTINGS_FILE="$(find "$PROJECT_DIR" -maxdepth 3 \
-              \( -name settings.gradle.kts -o -name settings.gradle \) \
-              -type f | head -n 1)"
-
-            if [ -z "$SETTINGS_FILE" ]; then
-              echo "ERROR: settings.gradle(.kts) not found"
-              exit 1
-            fi
-
-            FINAL_PROJECT_DIR="$(dirname "$SETTINGS_FILE")"
-          fi
-
-          echo "FINAL_PROJECT_DIR=$FINAL_PROJECT_DIR"
-          echo "FINAL_PROJECT_DIR=$FINAL_PROJECT_DIR" >> "$CM_ENV"
-
+          
+          echo "API key detected."
+          echo "Base URL: $LIVE_TV_BASE_URL"
 
       - name: Check Android project
         script: |
-          set -e
-
-          cd "$FINAL_PROJECT_DIR"
-
-          test -f settings.gradle.kts || test -f settings.gradle
-          test -f build.gradle.kts || test -f build.gradle
-          test -f app/build.gradle.kts || test -f app/build.gradle
-          test -f app/src/main/AndroidManifest.xml
-
-          echo "Android project verified:"
-          pwd
-
-
-      - name: Configure Android SDK
-        script: |
-          set -e
-
-          cd "$FINAL_PROJECT_DIR"
-
-          echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-
-
-      - name: Check API key
-        script: |
-          set -e
-
-          if [ -z "$LIVE_TV_API_KEY" ]; then
-            echo "ERROR: LIVE_TV_API_KEY is missing."
-            echo "Create LIVE_TV_API_KEY inside the livetv_secrets variable group."
+          if [ ! -f "settings.gradle.kts" ] && [ ! -f "settings.gradle" ]; then
+            echo "ERROR: Android project not found"
             exit 1
           fi
 
-          echo "API key detected."
-
+          echo "Android project found."
 
       - name: Make Gradle executable
         script: |
-          set -e
+          chmod +x ./gradlew
 
-          cd "$FINAL_PROJECT_DIR"
-
-          if [ -f "./gradlew" ]; then
-            chmod +x ./gradlew
-          fi
-
+      - name: Clean project
+        script: |
+          ./gradlew --no-daemon clean
 
       - name: Build Debug APK
         script: |
-          set -e
-
-          cd "$FINAL_PROJECT_DIR"
-
-          echo "Building Android APK from:"
-          pwd
-
-          if [ -f "./gradlew" ]; then
-
-            ./gradlew \
-              --no-daemon \
-              --stacktrace \
-              assembleDebug \
-              -PLIVE_TV_BASE_URL="$LIVE_TV_BASE_URL" \
-              -PLIVE_TV_API_KEY="$LIVE_TV_API_KEY"
-
-          else
-
-            gradle \
-              --no-daemon \
-              --stacktrace \
-              assembleDebug \
-              -PLIVE_TV_BASE_URL="$LIVE_TV_BASE_URL" \
-              -PLIVE_TV_API_KEY="$LIVE_TV_API_KEY"
-
-          fi
-
+          ./gradlew --no-daemon --stacktrace assembleDebug \
+            -PLIVE_TV_BASE_URL="$LIVE_TV_BASE_URL" \
+            -PLIVE_TV_API_KEY="$LIVE_TV_API_KEY"
 
     artifacts:
-      - builder/app/build/outputs/apk/debug/*.apk
       - app/build/outputs/apk/debug/*.apk
+
+    publishing:
+      email:
+        recipients:
+          - YOUR_EMAIL@example.com
+        notify:
+          success: true
+          failure: true
