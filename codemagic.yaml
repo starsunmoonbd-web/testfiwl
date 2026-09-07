@@ -1,28 +1,40 @@
 workflows:
   android-debug:
     name: LiveTV Android APK
-    max_build_duration: 60
-    instance_type: linux_x2
+    max_build_duration: 120
+    instance_type: mac_mini_m2
+
+    environment:
+      vars:
+        LIVE_TV_BASE_URL: "https://sojib247.iceiy.com/"
+        LIVE_TV_API_KEY: $LIVE_TV_API_KEY
 
     scripts:
-      - name: Check ZIP
+      - name: Check project ZIP
         script: |
           set -e
           echo "Current directory:"
           pwd
           echo "Repository files:"
           ls -lah
-          test -f LiveTV_Codemagic_ZIP_Builder.zip
+          test -f "LiveTV_Codemagic_ZIP_Builder.zip"
 
       - name: Extract project ZIP
         script: |
           set -e
           rm -rf builder
           mkdir -p builder
-          unzip -q LiveTV_Codemagic_ZIP_Builder.zip -d builder
+
+          unzip -q "LiveTV_Codemagic_ZIP_Builder.zip" -d builder
+
+          echo "Extracted files:"
+          find builder -maxdepth 2 -type f -print
+
+          test -f "builder/build.sh"
+
           cd builder
           chmod +x build.sh
           bash build.sh
 
     artifacts:
-      - builder/extracted/app/build/outputs/apk/debug/*.apk
+      - builder/extracted/app/build/outputs/**/*.apk
