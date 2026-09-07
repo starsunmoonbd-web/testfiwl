@@ -10,41 +10,115 @@ workflows:
         LIVE_TV_BASE_URL: "https://sojib247.iceiy.com/"
 
     scripts:
-      - name: Check API configuration
+
+      - name: Extract Android Project
         script: |
+          set -e
+
+          echo "Current directory:"
+          pwd
+          ls -la
+
+          mkdir -p builder
+
+          ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "No ZIP file found."
+            exit 1
+          fi
+
+          echo "Found ZIP: $ZIP_FILE"
+
+          unzip -o "$ZIP_FILE" -d builder
+
+          echo "Extracted files:"
+          find builder -maxdepth 3 -type f | head -100
+
+      - name: Find Android Project
+        script: |
+          set -e
+
+          FINAL_PROJECT_DIR=""
+
+          while IFS= read -r settings_file; do
+            DIR=$(dirname "$settings_file")
+
+            if [ -f "$DIR/app/build.gradle.kts" ] || [ -f "$DIR/app/build.gradle" ]; then
+              FINAL_PROJECT_DIR="$DIR"
+              break
+            fi
+          done < <(find builder -type f \( -name "settings.gradle.kts" -o -name "settings.gradle" \))
+
+          if [ -z "$FINAL_PROJECT_DIR" ]; then
+            echo "ERROR: Android project not found after ZIP extraction."
+            find builder -maxdepth 5 -type f | sort
+            exit 1
+          fi
+
+          echo "Android project found:"
+          echo "$FINAL_PROJECT_DIR"
+
+          echo "$FINAL_PROJECT_DIR" > /tmp/final_project_dir
+
+      - name: Check API Configuration
+        script: |
+          set -e
+
           if [ -z "$LIVE_TV_API_KEY" ]; then
-            echo "ERROR: LIVE_TV_API_KEY is missing"
+            echo "ERROR: LIVE_TV_API_KEY is missing."
             exit 1
           fi
 
           echo "API key detected."
           echo "Base URL: $LIVE_TV_BASE_URL"
 
-      - name: Check Android project
+      - name: Configure Android Project
         script: |
-          if [ ! -f "settings.gradle.kts" ] && [ ! -f "settings.gradle" ]; then
-            echo "ERROR: Android project not found"
-            exit 1
-          fi
+          set -e
 
-          echo "Android project found."
+          FINAL_PROJECT_DIR=$(cat /tmp/final_project_dir)
 
-      - name: Make Gradle executable
-        script: |
-          chmod +x ./gradlew
+          echo "Project directory:"
+          echo "$FINAL_PROJECT_DIR"
 
-      - name: Clean project
-        script: |
-          ./gradlew --no-daemon clean
+          cd "$FINAL_PROJECT_DIR"
+
+          echo "Project files:"
+          ls -la
 
       - name: Build Debug APK
         script: |
-          ./gradlew --no-daemon --stacktrace assembleDebug \
-            -PLIVE_TV_BASE_URL="$LIVE_TV_BASE_URL" \
-            -PLIVE_TV_API_KEY="$LIVE_TV_API_KEY"
+          set -e
+
+          FINAL_PROJECT_DIR=$(cat /tmp/final_project_dir)
+
+          cd "$FINAL_PROJECT_DIR"
+
+          if [ -f "./gradlew" ]; then
+            chmod +x ./gradlew
+
+            ./gradlew --no-daemon --stacktrace assembleDebug \
+              -PLIVE_TV_BASE_URL="$LIVE_TV_BASE_URL" \
+              -PLIVE_TV_API_KEY="$LIVE_TV_API_KEY"
+          else
+            echo "gradlew not found. Using system Gradle."
+
+            gradle --no-daemon --stacktrace assembleDebug \
+              -PLIVE_TV_BASE_URL="$LIVE_TV_BASE_URL" \
+              -PLIVE_TV_API_KEY="$LIVE_TV_API_KEY"
+          fi
+
+      - name: Show APK
+        script: |
+          FINAL_PROJECT_DIR=$(cat /tmp/final_project_dir)
+
+          echo "APK files:"
+          find "$FINAL_PROJECT_DIR/app/build/outputs" -type f -name "*.apk" -print
 
     artifacts:
-      - app/build/outputs/apk/debug/*.apk
+      - builder/**/app/build/outputs/apk/debug/*.apk
+      - builder/**/app/build/outputs/apk/release/*.apk
 
     publishing:
       email:
