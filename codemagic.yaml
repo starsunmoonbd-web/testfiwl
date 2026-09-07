@@ -20,7 +20,7 @@ workflows:
           echo "Repository files:"
           ls -lah
 
-          test -f "LiveTVApp_CODEMAGIC_FIXED.zip"
+          test -f "LiveTV_GitHub_CodeMagic_Clean.zip"
 
       - name: Extract project ZIP
         script: |
@@ -29,7 +29,7 @@ workflows:
           rm -rf builder
           mkdir -p builder
 
-          unzip -q "LiveTVApp_CODEMAGIC_FIXED.zip" -d builder
+          unzip -q "LiveTV_GitHub_CodeMagic_Clean.zip" -d builder
 
           echo "Extracted files:"
           find builder -maxdepth 2 -type f -print
