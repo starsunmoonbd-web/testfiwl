@@ -13,29 +13,25 @@ workflows:
     scripts:
 
       # ============================================================
-      # 1. FIND / EXTRACT PROJECT
+      # 1. EXTRACT PROJECT
       # ============================================================
 
       - name: Find and Extract Android Project
         script: |
           set -e
 
+          cd "$CM_BUILD_DIR"
+
           echo "=========================================="
           echo "Searching for Android project..."
           echo "=========================================="
 
-          cd "$CM_BUILD_DIR"
-
+          # If project is already at root
           if [ -f "settings.gradle.kts" ] && [ -d "app" ]; then
 
               echo "Android project found at repository root."
 
-              FINAL_PROJECT_DIR="$CM_BUILD_DIR"
-
           else
-
-              echo "Android project not at repository root."
-              echo "Searching for ZIP..."
 
               ZIP_FILE=""
 
@@ -61,106 +57,76 @@ workflows:
 
               unzip -q "$ZIP_FILE" -d "$CM_BUILD_DIR/builder"
 
-              echo "ZIP extracted."
+              echo "Extraction completed."
 
-              # Your current ZIP structure is:
-              #
-              # builder/
-              # ├── settings.gradle.kts
-              # ├── build.gradle.kts
-              # ├── app/
-              #
+              # Current ZIP structure:
+              # builder/settings.gradle.kts
+              # builder/build.gradle.kts
+              # builder/app/
+
               if [ -f "$CM_BUILD_DIR/builder/settings.gradle.kts" ] && \
                  [ -d "$CM_BUILD_DIR/builder/app" ]; then
 
-                  FINAL_PROJECT_DIR="$CM_BUILD_DIR/builder"
+                  echo "Android project found:"
+                  echo "$CM_BUILD_DIR/builder"
 
               elif [ -f "$CM_BUILD_DIR/builder/settings.gradle" ] && \
                    [ -d "$CM_BUILD_DIR/builder/app" ]; then
 
-                  FINAL_PROJECT_DIR="$CM_BUILD_DIR/builder"
+                  echo "Android project found:"
+                  echo "$CM_BUILD_DIR/builder"
 
               else
-
-                  echo "Searching inside extracted directory..."
-
-                  FINAL_PROJECT_DIR=""
-
-                  for DIR in "$CM_BUILD_DIR"/builder/*; do
-
-                      if [ -d "$DIR/app" ]; then
-
-                          if [ -f "$DIR/settings.gradle.kts" ] || \
-                             [ -f "$DIR/settings.gradle" ]; then
-
-                              FINAL_PROJECT_DIR="$DIR"
-                              break
-
-                          fi
-
-                      fi
-
-                  done
-
-              fi
-
-              if [ -z "$FINAL_PROJECT_DIR" ]; then
 
                   echo "ERROR: Android project not found."
 
                   echo ""
                   echo "Extracted files:"
-
-                  find "$CM_BUILD_DIR/builder" \
-                    -maxdepth 5 \
-                    -type f \
-                    -print
+                  find "$CM_BUILD_DIR/builder" -maxdepth 5 -type f -print
 
                   exit 1
               fi
-
           fi
 
           echo ""
-          echo "=========================================="
-          echo "Android project found:"
-          echo "$FINAL_PROJECT_DIR"
-          echo "=========================================="
-
-          test -f "$FINAL_PROJECT_DIR/settings.gradle.kts" || \
-          test -f "$FINAL_PROJECT_DIR/settings.gradle"
-
-          test -d "$FINAL_PROJECT_DIR/app"
-
-          test -f "$FINAL_PROJECT_DIR/app/build.gradle.kts" || \
-          test -f "$FINAL_PROJECT_DIR/app/build.gradle"
-
-          echo "Android project check PASSED."
+          echo "Project preparation PASSED."
 
 
       # ============================================================
-      # 2. ANDROID SDK
+      # 2. CONFIGURE SDK
       # ============================================================
 
       - name: Configure Android SDK
         script: |
           set -e
 
-          cd "$FINAL_PROJECT_DIR"
+          cd "$CM_BUILD_DIR"
+
+          if [ -f "$CM_BUILD_DIR/settings.gradle.kts" ] && \
+             [ -d "$CM_BUILD_DIR/app" ]; then
+
+              PROJECT_DIR="$CM_BUILD_DIR"
+
+          else
+
+              PROJECT_DIR="$CM_BUILD_DIR/builder"
+
+          fi
 
           echo "=========================================="
-          echo "Configuring Android SDK..."
+          echo "Android project:"
+          echo "$PROJECT_DIR"
           echo "=========================================="
+
+          cd "$PROJECT_DIR"
 
           echo "sdk.dir=$ANDROID_SDK_ROOT" > local.properties
-
-          cat local.properties
 
           echo "Android SDK configured."
 
 
       # ============================================================
-      # 3. API KEY
+      # 3. CHECK API KEY
       # ============================================================
 
       - name: Check API Configuration
@@ -172,85 +138,86 @@ workflows:
           echo "=========================================="
 
           if [ -z "$LIVE_TV_API_KEY" ]; then
-
               echo "ERROR: LIVE_TV_API_KEY is missing."
               echo ""
-              echo "Codemagic Variable Group:"
+              echo "Variable Group:"
               echo "livetv_secrets"
               echo ""
-              echo "Required Secret:"
+              echo "Required secret:"
               echo "LIVE_TV_API_KEY"
-
               exit 1
           fi
 
-          echo "LIVE_TV_BASE_URL:"
+          echo "API Base URL:"
           echo "$LIVE_TV_BASE_URL"
 
           echo ""
-          echo "LIVE_TV_API_KEY:"
-          echo "Configured (hidden)"
+          echo "API Key: Configured"
 
           echo ""
           echo "API configuration PASSED."
 
 
       # ============================================================
-      # 4. JAVA CHECK
+      # 4. PREPARE GRADLE
       # ============================================================
 
-      - name: Check Java Version
+      - name: Prepare Gradle
         script: |
           set -e
 
-          echo "=========================================="
-          echo "Checking Java..."
-          echo "=========================================="
+          cd "$CM_BUILD_DIR"
 
-          java -version
+          if [ -f "$CM_BUILD_DIR/settings.gradle.kts" ] && \
+             [ -d "$CM_BUILD_DIR/app" ]; then
 
-          echo ""
-          echo "JAVA_HOME:"
-          echo "$JAVA_HOME"
-
-          echo ""
-          echo "Java check completed."
-
-
-      # ============================================================
-      # 5. CREATE GRADLE WRAPPER
-      # ============================================================
-
-      - name: Prepare Gradle 8.9
-        script: |
-          set -e
-
-          cd "$FINAL_PROJECT_DIR"
-
-          echo "=========================================="
-          echo "Preparing Gradle 8.9..."
-          echo "=========================================="
-
-          if [ -f "./gradlew" ]; then
-
-              echo "Gradle wrapper already exists."
-
-              chmod +x ./gradlew
+              PROJECT_DIR="$CM_BUILD_DIR"
 
           else
 
-              echo "Gradle wrapper not found."
-              echo "Creating Gradle 8.9 wrapper..."
-
-              gradle wrapper --gradle-version 8.9
-
-              chmod +x ./gradlew
+              PROJECT_DIR="$CM_BUILD_DIR/builder"
 
           fi
 
+          echo "=========================================="
+          echo "Preparing Gradle..."
+          echo "=========================================="
+
+          echo "Project directory:"
+          echo "$PROJECT_DIR"
+
+          cd "$PROJECT_DIR"
+
+          echo ""
+          echo "Current directory:"
+          pwd
+
+          echo ""
+          echo "Project files:"
+          ls -la
+
+          # Create wrapper if missing
+          if [ ! -f "./gradlew" ]; then
+
+              echo ""
+              echo "Gradle wrapper not found."
+              echo "Creating Gradle 8.9 wrapper..."
+
+              cd "$PROJECT_DIR"
+
+              # IMPORTANT:
+              # Run system Gradle FROM THE PROJECT DIRECTORY
+              gradle wrapper --gradle-version 8.9
+
+          fi
+
+          chmod +x ./gradlew
+
+          echo ""
+          echo "Gradle wrapper created."
+
           echo ""
           echo "Gradle version:"
-
           ./gradlew --version
 
           echo ""
@@ -258,14 +225,27 @@ workflows:
 
 
       # ============================================================
-      # 6. CLEAN
+      # 5. CLEAN
       # ============================================================
 
       - name: Clean Android Project
         script: |
           set -e
 
-          cd "$FINAL_PROJECT_DIR"
+          cd "$CM_BUILD_DIR"
+
+          if [ -f "$CM_BUILD_DIR/settings.gradle.kts" ] && \
+             [ -d "$CM_BUILD_DIR/app" ]; then
+
+              PROJECT_DIR="$CM_BUILD_DIR"
+
+          else
+
+              PROJECT_DIR="$CM_BUILD_DIR/builder"
+
+          fi
+
+          cd "$PROJECT_DIR"
 
           echo "=========================================="
           echo "Cleaning project..."
@@ -277,17 +257,30 @@ workflows:
 
 
       # ============================================================
-      # 7. BUILD
+      # 6. BUILD APK
       # ============================================================
 
       - name: Build Debug APK
         script: |
           set -e
 
-          cd "$FINAL_PROJECT_DIR"
+          cd "$CM_BUILD_DIR"
+
+          if [ -f "$CM_BUILD_DIR/settings.gradle.kts" ] && \
+             [ -d "$CM_BUILD_DIR/app" ]; then
+
+              PROJECT_DIR="$CM_BUILD_DIR"
+
+          else
+
+              PROJECT_DIR="$CM_BUILD_DIR/builder"
+
+          fi
+
+          cd "$PROJECT_DIR"
 
           echo "=========================================="
-          echo "Building LiveTV Debug APK..."
+          echo "Building LiveTV APK..."
           echo "=========================================="
 
           echo ""
@@ -299,12 +292,11 @@ workflows:
           ./gradlew --version
 
           echo ""
-          echo "Starting build..."
+          echo "Building..."
 
           ./gradlew \
             --no-daemon \
             --stacktrace \
-            --info \
             assembleDebug \
             -PLIVE_TV_BASE_URL="$LIVE_TV_BASE_URL" \
             -PLIVE_TV_API_KEY="$LIVE_TV_API_KEY"
@@ -316,48 +308,13 @@ workflows:
 
 
       # ============================================================
-      # 8. VERIFY APK
+      # 7. VERIFY APK
       # ============================================================
 
       - name: Verify APK
         script: |
           set -e
 
-          echo "=========================================="
-          echo "Verifying APK..."
-          echo "=========================================="
+          cd "$CM_BUILD_DIR"
 
-          APK="$FINAL_PROJECT_DIR/app/build/outputs/apk/debug/app-debug.apk"
-
-          if [ ! -f "$APK" ]; then
-
-              echo "ERROR: APK was not generated."
-
-              echo ""
-              echo "Searching for APK files..."
-
-              find "$FINAL_PROJECT_DIR" \
-                -type f \
-                -name "*.apk" \
-                -print
-
-              exit 1
-          fi
-
-          echo ""
-          echo "APK FOUND:"
-          echo "$APK"
-
-          echo ""
-          ls -lh "$APK"
-
-          echo ""
-          echo "APK verification PASSED."
-
-
-    # ================================================================
-    # ARTIFACT
-    # ================================================================
-
-    artifacts:
-      - "**/app/build/outputs/apk/debug/*.apk"
+          if [ -f "$CM
