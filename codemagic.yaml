@@ -8,19 +8,15 @@ workflows:
         - livetv_secrets
       vars:
         LIVE_TV_BASE_URL: "https://sojib247.iceiy.com/"
-      android_signing:
-        - debug_keystore
 
     scripts:
       - name: Check API configuration
         script: |
-          echo "Checking API configuration..."
-          
           if [ -z "$LIVE_TV_API_KEY" ]; then
             echo "ERROR: LIVE_TV_API_KEY is missing"
             exit 1
           fi
-          
+
           echo "API key detected."
           echo "Base URL: $LIVE_TV_BASE_URL"
 
