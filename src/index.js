@@ -2,21 +2,13 @@ const UPSTREAM_M3U8 =
   "https://d1g8wgjurz8via.cloudfront.net/bpk-tv/ColorsHD/default/ColorsHD.m3u8";
 
 const UPSTREAM_HOST = "d1g8wgjurz8via.cloudfront.net";
-
 const TOKEN_TTL = 300;
-
-// =========================================
-// MAIN WORKER
-// =========================================
 
 export default {
   async fetch(request, env) {
     try {
       const url = new URL(request.url);
 
-      // =====================================
-      // CORS / OPTIONS
-      // =====================================
       if (request.method === "OPTIONS") {
         return new Response(null, {
           status: 204,
@@ -24,25 +16,15 @@ export default {
         });
       }
 
-      // =====================================
-      // SECRET CHECK
-      // =====================================
       if (!env.STREAM_SECRET) {
         return jsonResponse(
-          {
-            error: "STREAM_SECRET is not configured"
-          },
+          { error: "STREAM_SECRET is not configured" },
           500
         );
       }
 
-      // =====================================
-      // TOKEN ENDPOINT
-      // =====================================
       if (url.pathname === "/token") {
-        const token = await createToken(
-          env.STREAM_SECRET
-        );
+        const token = await createToken(env.STREAM_SECRET);
 
         return jsonResponse({
           stream:
@@ -51,25 +33,17 @@ export default {
         });
       }
 
-      // =====================================
-      // MAIN PLAYLIST
-      // =====================================
       if (url.pathname === "/live.m3u8") {
-        const token =
-          url.searchParams.get("token");
+        const token = url.searchParams.get("token");
 
         if (!token) {
-          return textResponse(
-            "Token missing",
-            403
-          );
+          return textResponse("Token missing", 403);
         }
 
-        const valid =
-          await verifyToken(
-            token,
-            env.STREAM_SECRET
-          );
+        const valid = await verifyToken(
+          token,
+          env.STREAM_SECRET
+        );
 
         if (!valid) {
           return textResponse(
@@ -86,15 +60,9 @@ export default {
         );
       }
 
-      // =====================================
-      // HLS PROXY
-      // =====================================
       if (url.pathname === "/hls") {
-        const token =
-          url.searchParams.get("token");
-
-        const encrypted =
-          url.searchParams.get("p");
+        const token = url.searchParams.get("token");
+        const encrypted = url.searchParams.get("p");
 
         if (!token || !encrypted) {
           return textResponse(
@@ -103,12 +71,10 @@ export default {
           );
         }
 
-        // Verify token
-        const valid =
-          await verifyToken(
-            token,
-            env.STREAM_SECRET
-          );
+        const valid = await verifyToken(
+          token,
+          env.STREAM_SECRET
+        );
 
         if (!valid) {
           return textResponse(
@@ -117,36 +83,33 @@ export default {
           );
         }
 
-        // Decrypt target URL
         let targetUrl;
 
         try {
-          targetUrl =
-            await decryptTarget(
-              encrypted,
-              env.STREAM_SECRET
-            );
-        } catch (e) {
+          targetUrl = await decryptTarget(
+            encrypted,
+            env.STREAM_SECRET
+          );
+        } catch (error) {
           return textResponse(
             "Invalid target",
             403
           );
         }
 
-        // Validate target URL
         let target;
 
         try {
           target = new URL(targetUrl);
-        } catch (e) {
+        } catch (error) {
           return textResponse(
             "Invalid URL",
             400
           );
         }
 
-        // Only allow the configured upstream host
         if (
+          target.protocol !== "https:" ||
           target.hostname !== UPSTREAM_HOST
         ) {
           return textResponse(
@@ -155,9 +118,9 @@ export default {
           );
         }
 
-        // Fetch upstream resource
-        const response =
-          await fetch(target.toString(), {
+        const response = await fetch(
+          target.toString(),
+          {
             method: "GET",
             headers: {
               "User-Agent":
@@ -167,15 +130,13 @@ export default {
               cacheTtl: 0,
               cacheEverything: false
             }
-          });
+          }
+        );
 
         if (!response.ok) {
-          return new Response(
+          return textResponse(
             `Upstream error: ${response.status}`,
-            {
-              status: response.status,
-              headers: corsHeaders()
-            }
+            response.status
           );
         }
 
@@ -184,10 +145,7 @@ export default {
             "content-type"
           ) || "";
 
-        // =================================
-        // PLAYLIST
-        // =================================
-        if (
+        const isPlaylist =
           contentType.includes(
             "mpegurl"
           ) ||
@@ -196,19 +154,19 @@ export default {
           ) ||
           target.pathname.endsWith(
             ".m3u"
-          )
-        ) {
+          );
+
+        if (isPlaylist) {
           const text =
             await response.text();
 
           const rewritten =
-            rewritePlaylist(
+            await rewritePlaylist(
               text,
               target,
               token,
-              targetUrl,
               env.STREAM_SECRET,
-              new URL(request.url).origin
+              url.origin
             );
 
           return new Response(
@@ -226,9 +184,6 @@ export default {
           );
         }
 
-        // =================================
-        // VIDEO / SEGMENT / OTHER DATA
-        // =================================
         return new Response(
           response.body,
           {
@@ -245,9 +200,6 @@ export default {
         );
       }
 
-      // =====================================
-      // 404
-      // =====================================
       return textResponse(
         "Not found",
         404
@@ -256,8 +208,10 @@ export default {
     } catch (error) {
       return jsonResponse(
         {
-          error: "Internal Server Error",
-          message: error.message
+          error:
+            "Internal Server Error",
+          message:
+            error.message
         },
         500
       );
@@ -266,9 +220,9 @@ export default {
 };
 
 
-// =========================================
+// ========================================
 // GET PLAYLIST
-// =========================================
+// ========================================
 
 async function getPlaylist(
   playlistUrl,
@@ -277,17 +231,20 @@ async function getPlaylist(
   secret
 ) {
   const response =
-    await fetch(playlistUrl, {
-      method: "GET",
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 HLS-Proxy"
-      },
-      cf: {
-        cacheTtl: 0,
-        cacheEverything: false
+    await fetch(
+      playlistUrl,
+      {
+        method: "GET",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 HLS-Proxy"
+        },
+        cf: {
+          cacheTtl: 0,
+          cacheEverything: false
+        }
       }
-    });
+    );
 
   if (!response.ok) {
     return textResponse(
@@ -299,15 +256,11 @@ async function getPlaylist(
   const text =
     await response.text();
 
-  const base =
-    new URL(playlistUrl);
-
   const rewritten =
-    rewritePlaylist(
+    await rewritePlaylist(
       text,
-      base,
+      new URL(playlistUrl),
       token,
-      playlistUrl,
       secret,
       origin
     );
@@ -328,101 +281,112 @@ async function getPlaylist(
 }
 
 
-// =========================================
-// REWRITE HLS PLAYLIST
-// =========================================
+// ========================================
+// REWRITE PLAYLIST
+// ========================================
 
-function rewritePlaylist(
+async function rewritePlaylist(
   text,
   baseUrl,
   token,
-  originalUrl,
   secret,
   origin
 ) {
-  // Rewrite URI="..."
-  text = text.replace(
-    /URI="([^"]+)"/g,
-    (match, uri) => {
-      try {
-        const absolute =
-          new URL(
-            uri,
-            baseUrl
-          ).toString();
+  let result = text;
 
-        if (
-          isAllowedHost(
-            absolute
-          )
-        ) {
-          return `URI="${makeProxyUrl(
-            absolute,
-            token,
-            secret,
-            origin
-          )}"`;
-        }
+  // URI="..."
+  const matches = [
+    ...text.matchAll(
+      /URI="([^"]+)"/g
+    )
+  ];
 
-        return match;
+  for (const match of matches) {
+    const original =
+      match[1];
 
-      } catch (e) {
-        return match;
-      }
-    }
-  );
+    try {
+      const absolute =
+        new URL(
+          original,
+          baseUrl
+        ).toString();
 
-  // Rewrite normal playlist lines
-  const lines =
-    text.split("\n");
-
-  const output =
-    lines.map((line) => {
-      const trimmed =
-        line.trim();
-
-      // Empty/comment line
       if (
-        !trimmed ||
-        trimmed.startsWith("#")
+        isAllowedHost(
+          absolute
+        )
       ) {
-        return line;
-      }
-
-      try {
-        const absolute =
-          new URL(
-            trimmed,
-            baseUrl
-          ).toString();
-
-        if (
-          isAllowedHost(
-            absolute
-          )
-        ) {
-          return makeProxyUrl(
+        const proxyUrl =
+          await makeProxyUrl(
             absolute,
             token,
             secret,
             origin
           );
-        }
 
-        return line;
-
-      } catch (e) {
-        return line;
+        result =
+          result.replace(
+            `URI="${original}"`,
+            `URI="${proxyUrl}"`
+          );
       }
-    });
+    } catch (error) {
+      // Ignore invalid URI
+    }
+  }
 
-  return output.join("\n");
+  // Normal HLS URLs
+  const lines =
+    result.split("\n");
+
+  for (
+    let i = 0;
+    i < lines.length;
+    i++
+  ) {
+    const line =
+      lines[i].trim();
+
+    if (
+      !line ||
+      line.startsWith("#")
+    ) {
+      continue;
+    }
+
+    try {
+      const absolute =
+        new URL(
+          line,
+          baseUrl
+        ).toString();
+
+      if (
+        isAllowedHost(
+          absolute
+        )
+      ) {
+        lines[i] =
+          await makeProxyUrl(
+            absolute,
+            token,
+            secret,
+            origin
+          );
+      }
+    } catch (error) {
+      // Ignore invalid URL
+    }
+  }
+
+  return lines.join("\n");
 }
 
 
-// =========================================
-// CREATE PROXY URL
-// =========================================
+// ========================================
+// MAKE PROXY URL
+// ========================================
 
 async function makeProxyUrl(
   target,
@@ -437,38 +401,39 @@ async function makeProxyUrl(
     );
 
   return (
-    `${origin}/hls` +
-    `?token=${encodeURIComponent(token)}` +
+    `${origin}/hls?token=` +
+    `${encodeURIComponent(token)}` +
     `&p=${encodeURIComponent(encrypted)}`
   );
 }
 
 
-// =========================================
-// HOST VALIDATION
-// =========================================
+// ========================================
+// HOST CHECK
+// ========================================
 
 function isAllowedHost(
   targetUrl
 ) {
   try {
-    const u =
+    const url =
       new URL(targetUrl);
 
     return (
-      u.protocol === "https:" &&
-      u.hostname === UPSTREAM_HOST
+      url.protocol === "https:" &&
+      url.hostname ===
+        UPSTREAM_HOST
     );
 
-  } catch (e) {
+  } catch (error) {
     return false;
   }
 }
 
 
-// =========================================
-// TOKEN CREATE
-// =========================================
+// ========================================
+// CREATE TOKEN
+// ========================================
 
 async function createToken(
   secret
@@ -478,22 +443,21 @@ async function createToken(
       Date.now() / 1000
     ) + TOKEN_TTL;
 
-  const data =
-    String(expires);
-
   const signature =
     await hmacSign(
-      data,
+      String(expires),
       secret
     );
 
-  return `${expires}.${signature}`;
+  return (
+    `${expires}.${signature}`
+  );
 }
 
 
-// =========================================
-// TOKEN VERIFY
-// =========================================
+// ========================================
+// VERIFY TOKEN
+// ========================================
 
 async function verifyToken(
   token,
@@ -503,18 +467,19 @@ async function verifyToken(
     const parts =
       token.split(".");
 
-    if (parts.length !== 2) {
+    if (
+      parts.length !== 2
+    ) {
       return false;
     }
 
     const expires =
       Number(parts[0]);
 
-    const signature =
-      parts[1];
-
     if (
-      !Number.isFinite(expires)
+      !Number.isFinite(
+        expires
+      )
     ) {
       return false;
     }
@@ -535,19 +500,19 @@ async function verifyToken(
       );
 
     return timingSafeEqual(
-      signature,
+      parts[1],
       expected
     );
 
-  } catch (e) {
+  } catch (error) {
     return false;
   }
 }
 
 
-// =========================================
+// ========================================
 // HMAC SHA-256
-// =========================================
+// ========================================
 
 async function hmacSign(
   message,
@@ -581,46 +546,52 @@ async function hmacSign(
 }
 
 
-// =========================================
-// ENCRYPT TARGET URL
-// =========================================
+// ========================================
+// ENCRYPT TARGET
+// ========================================
 
 async function encryptTarget(
   text,
   secret
 ) {
   const key =
-    await deriveAESKey(secret);
+    await deriveAESKey(
+      secret
+    );
 
   const iv =
     crypto.getRandomValues(
       new Uint8Array(12)
     );
 
-  const encoder =
-    new TextEncoder();
-
   const encrypted =
     await crypto.subtle.encrypt(
       {
         name: "AES-GCM",
-        iv
+        iv: iv
       },
       key,
-      encoder.encode(text)
+      new TextEncoder().encode(
+        text
+      )
     );
 
   const result =
     new Uint8Array(
-      iv.length +
+      12 +
       encrypted.byteLength
     );
 
-  result.set(iv, 0);
+  result.set(
+    iv,
+    0
+  );
 
   result.set(
-    new Uint8Array(encrypted),
-    iv.length
+    new Uint8Array(
+      encrypted
+    ),
+    12
   );
 
   return arrayBufferToBase64Url(
@@ -629,64 +600,73 @@ async function encryptTarget(
 }
 
 
-// =========================================
-// DECRYPT TARGET URL
-// =========================================
+// ========================================
+// DECRYPT TARGET
+// ========================================
 
 async function decryptTarget(
   encoded,
   secret
 ) {
   const key =
-    await deriveAESKey(secret);
+    await deriveAESKey(
+      secret
+    );
 
   const data =
     base64UrlToUint8Array(
       encoded
     );
 
-  if (data.length < 13) {
+  if (
+    data.length < 13
+  ) {
     throw new Error(
       "Invalid encrypted data"
     );
   }
 
   const iv =
-    data.slice(0, 12);
+    data.slice(
+      0,
+      12
+    );
 
   const encrypted =
-    data.slice(12);
+    data.slice(
+      12
+    );
 
   const decrypted =
     await crypto.subtle.decrypt(
       {
         name: "AES-GCM",
-        iv
+        iv: iv
       },
       key,
       encrypted
     );
 
-  return new TextDecoder().decode(
-    decrypted
-  );
+  return new TextDecoder()
+    .decode(
+      decrypted
+    );
 }
 
 
-// =========================================
-// DERIVE AES KEY
-// =========================================
+// ========================================
+// AES KEY
+// ========================================
 
 async function deriveAESKey(
   secret
 ) {
-  const encoder =
-    new TextEncoder();
-
   const hash =
     await crypto.subtle.digest(
       "SHA-256",
-      encoder.encode(secret)
+      new TextEncoder().encode(
+        secret
+      )
     );
 
   return crypto.subtle.importKey(
@@ -704,15 +684,17 @@ async function deriveAESKey(
 }
 
 
-// =========================================
-// BASE64 URL
-// =========================================
+// ========================================
+// BASE64 URL ENCODE
+// ========================================
 
 function arrayBufferToBase64Url(
   buffer
 ) {
   const bytes =
-    new Uint8Array(buffer);
+    new Uint8Array(
+      buffer
+    );
 
   let binary = "";
 
@@ -721,29 +703,45 @@ function arrayBufferToBase64Url(
     i < bytes.length;
     i++
   ) {
-    binary += String.fromCharCode(
-      bytes[i]
-    );
+    binary +=
+      String.fromCharCode(
+        bytes[i]
+      );
   }
 
   return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/g, "");
+    .replace(
+      /\+/g,
+      "-"
+    )
+    .replace(
+      /\//g,
+      "_"
+    )
+    .replace(
+      /=+$/,
+      ""
+    );
 }
 
 
-// =========================================
+// ========================================
 // BASE64 URL DECODE
-// =========================================
+// ========================================
 
 function base64UrlToUint8Array(
   input
 ) {
   let base64 =
     input
-      .replace(/-/g, "+")
-      .replace(/_/g, "/");
+      .replace(
+        /-/g,
+        "+"
+      )
+      .replace(
+        /_/g,
+        "/"
+      );
 
   while (
     base64.length % 4
@@ -772,9 +770,9 @@ function base64UrlToUint8Array(
 }
 
 
-// =========================================
+// ========================================
 // TIMING SAFE EQUAL
-// =========================================
+// ========================================
 
 function timingSafeEqual(
   a,
@@ -809,13 +807,14 @@ function timingSafeEqual(
 }
 
 
-// =========================================
+// ========================================
 // CORS
-// =========================================
+// ========================================
 
 function corsHeaders() {
   return {
-    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Origin":
+      "*",
     "Access-Control-Allow-Methods":
       "GET, HEAD, OPTIONS",
     "Access-Control-Allow-Headers":
@@ -826,9 +825,9 @@ function corsHeaders() {
 }
 
 
-// =========================================
+// ========================================
 // TEXT RESPONSE
-// =========================================
+// ========================================
 
 function textResponse(
   text,
@@ -837,7 +836,7 @@ function textResponse(
   return new Response(
     text,
     {
-      status,
+      status: status,
       headers: {
         ...corsHeaders(),
         "Content-Type":
@@ -850,9 +849,9 @@ function textResponse(
 }
 
 
-// =========================================
+// ========================================
 // JSON RESPONSE
-// =========================================
+// ========================================
 
 function jsonResponse(
   data,
@@ -861,7 +860,7 @@ function jsonResponse(
   return new Response(
     JSON.stringify(data),
     {
-      status,
+      status: status,
       headers: {
         ...corsHeaders(),
         "Content-Type":
