@@ -1,7 +1,7 @@
 const UPSTREAM_M3U8 =
-  "http://line.tivi-one.net/play/live.php?mac=00:1A:79:B4:54:0F&stream=737323&extension=.m3u8";
+  "https://fifabangladesh.top/tvdx/play.php?id=908680&e=.m3u8";
 
-const UPSTREAM_HOST = "http://line.tivi-one.net/play/live.php?mac=00:1A:79:B4:54:0F&stream=737323&extension=.m3u8";
+const UPSTREAM_HOST = "https://fifabangladesh.top/tvdx/play.php?id=908680&e=.m3u8";
 const TOKEN_TTL = 300;
 
 export default {
