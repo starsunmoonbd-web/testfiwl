@@ -1,87 +1,117 @@
-const ORIGIN = "http://line.tivi-one.net/play/live.php?mac=00:1A:79:B4:54:0F&stream=737323&extension=.m3u8";
-
-const TOKEN_TTL = 5 * 60; // 5 minutes
+const TOKEN_TTL = 5 * 60;
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
+    try {
+      const url = new URL(request.url);
 
-    // Token তৈরি
-    if (url.pathname === "/token") {
-      const exp = Math.floor(Date.now() / 1000) + TOKEN_TTL;
-      const token = await createToken(exp, env.SECRET);
+      // =========================
+      // 1. TOKEN GENERATOR
+      // =========================
+      if (url.pathname === "/token") {
+        if (!env.SECRET) {
+          return new Response("ERROR: SECRET is missing", {
+            status: 500
+          });
+        }
 
-      return new Response(
-        JSON.stringify({
-          token,
-          expires: exp,
+        const exp = Math.floor(Date.now() / 1000) + TOKEN_TTL;
+        const token = await createToken(exp, env.SECRET);
+
+        return new Response(JSON.stringify({
+          token: token,
           expires_in: TOKEN_TTL,
-          url: `${url.origin}/live.m3u8?token=${token}`
-        }),
-        {
+          url: `${url.origin}/live.m3u8?token=${encodeURIComponent(token)}`
+        }, null, 2), {
           headers: {
             "Content-Type": "application/json",
             "Cache-Control": "no-store"
           }
-        }
-      );
-    }
-
-    // Token যাচাই
-    if (url.pathname === "/live.m3u8") {
-      const token = url.searchParams.get("token");
-
-      if (!token) {
-        return new Response("Missing token", { status: 401 });
-      }
-
-      const valid = await verifyToken(token, env.SECRET);
-
-      if (!valid) {
-        return new Response("Token expired or invalid", {
-          status: 403
         });
       }
 
-      const originUrl =
-        `${ORIGIN}/live.m3u8`;
-
-      const response = await fetch(originUrl, {
-        headers: {
-          "User-Agent": "Mozilla/5.0",
-          "Accept": "*/*"
+      // =========================
+      // 2. HLS
+      // =========================
+      if (url.pathname === "/live.m3u8") {
+        if (!env.SECRET) {
+          return new Response("ERROR: SECRET is missing", {
+            status: 500
+          });
         }
-      });
 
-      if (!response.ok) {
-        return new Response(
-          `Origin error: ${response.status}`,
-          { status: 502 }
-        );
+        const token = url.searchParams.get("token");
+
+        if (!token) {
+          return new Response("ERROR: token missing", {
+            status: 401
+          });
+        }
+
+        if (!await verifyToken(token, env.SECRET)) {
+          return new Response("ERROR: token expired/invalid", {
+            status: 403
+          });
+        }
+
+        // ==========================================
+        // নিজের অনুমোদিত HLS URL এখানে বসাবে
+        // ==========================================
+        const HLS_ORIGIN = env.HLS_ORIGIN;
+
+        if (!HLS_ORIGIN) {
+          return new Response(
+            "ERROR: HLS_ORIGIN is not configured",
+            { status: 500 }
+          );
+        }
+
+        const response = await fetch(HLS_ORIGIN, {
+          headers: {
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "*/*"
+          }
+        });
+
+        if (!response.ok) {
+          return new Response(
+            `Origin error: ${response.status}`,
+            { status: 502 }
+          );
+        }
+
+        return new Response(response.body, {
+          status: 200,
+          headers: {
+            "Content-Type":
+              response.headers.get("Content-Type") ||
+              "application/vnd.apple.mpegurl",
+
+            "Cache-Control": "no-store",
+            "Access-Control-Allow-Origin": "*"
+          }
+        });
       }
 
-      return new Response(response.body, {
-        status: 200,
-        headers: {
-          "Content-Type": "application/vnd.apple.mpegurl",
-          "Cache-Control": "no-store",
-          "Access-Control-Allow-Origin": "*"
-        }
+      return new Response("Not Found", {
+        status: 404
       });
-    }
 
-    return new Response("Not Found", { status: 404 });
+    } catch (error) {
+      return new Response(
+        "Worker Error: " + error.message,
+        { status: 500 }
+      );
+    }
   }
 };
 
 
-// =========================
+// ======================================
 // HMAC TOKEN
-// =========================
+// ======================================
 
 async function createToken(exp, secret) {
-  const data = String(exp);
-
   const key = await crypto.subtle.importKey(
     "raw",
     new TextEncoder().encode(secret),
@@ -96,7 +126,7 @@ async function createToken(exp, secret) {
   const signature = await crypto.subtle.sign(
     "HMAC",
     key,
-    new TextEncoder().encode(data)
+    new TextEncoder().encode(String(exp))
   );
 
   return `${exp}.${base64url(signature)}`;
@@ -105,20 +135,19 @@ async function createToken(exp, secret) {
 
 async function verifyToken(token, secret) {
   try {
-    const [exp, signature] = token.split(".");
+    const parts = token.split(".");
 
-    if (!exp || !signature) return false;
+    if (parts.length !== 2) return false;
 
-    const expiry = Number(exp);
+    const exp = Number(parts[0]);
 
-    if (!Number.isFinite(expiry)) return false;
+    if (!Number.isFinite(exp)) return false;
 
-    // ৫ মিনিট পার হলে invalid
-    if (Math.floor(Date.now() / 1000) > expiry) {
+    if (Math.floor(Date.now() / 1000) >= exp) {
       return false;
     }
 
-    const expected = await createToken(expiry, secret);
+    const expected = await createToken(exp, secret);
 
     return timingSafeEqual(token, expected);
 
@@ -129,9 +158,13 @@ async function verifyToken(token, secret) {
 
 
 function base64url(buffer) {
-  return btoa(
-    String.fromCharCode(...new Uint8Array(buffer))
-  )
+  let binary = "";
+
+  for (const byte of new Uint8Array(buffer)) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary)
     .replace(/\+/g, "-")
     .replace(/\//g, "_")
     .replace(/=+$/, "");
@@ -148,4 +181,4 @@ function timingSafeEqual(a, b) {
   }
 
   return result === 0;
-    }
+      }
