@@ -1,184 +1,873 @@
-const TOKEN_TTL = 5 * 60;
+const UPSTREAM_M3U8 =
+  "http://line.tivi-one.net/play/live.php?mac=00:1A:79:B4:54:0F&stream=737323&extension=.m3u8";
+
+const UPSTREAM_HOST = "http://line.tivi-one.net/play/live.php?mac=00:1A:79:B4:54:0F&stream=737323&extension=.m3u8";
+const TOKEN_TTL = 300;
 
 export default {
   async fetch(request, env) {
     try {
       const url = new URL(request.url);
 
-      // =========================
-      // 1. TOKEN GENERATOR
-      // =========================
-      if (url.pathname === "/token") {
-        if (!env.SECRET) {
-          return new Response("ERROR: SECRET is missing", {
-            status: 500
-          });
-        }
-
-        const exp = Math.floor(Date.now() / 1000) + TOKEN_TTL;
-        const token = await createToken(exp, env.SECRET);
-
-        return new Response(JSON.stringify({
-          token: token,
-          expires_in: TOKEN_TTL,
-          url: `${url.origin}/live.m3u8?token=${encodeURIComponent(token)}`
-        }, null, 2), {
-          headers: {
-            "Content-Type": "application/json",
-            "Cache-Control": "no-store"
-          }
+      if (request.method === "OPTIONS") {
+        return new Response(null, {
+          status: 204,
+          headers: corsHeaders()
         });
       }
 
-      // =========================
-      // 2. HLS
-      // =========================
-      if (url.pathname === "/live.m3u8") {
-        if (!env.SECRET) {
-          return new Response("ERROR: SECRET is missing", {
-            status: 500
-          });
-        }
+      if (!env.STREAM_SECRET) {
+        return jsonResponse(
+          { error: "STREAM_SECRET is not configured" },
+          500
+        );
+      }
 
+      if (url.pathname === "/token") {
+        const token = await createToken(env.STREAM_SECRET);
+
+        return jsonResponse({
+          stream:
+            `${url.origin}/live.m3u8?token=${encodeURIComponent(token)}`,
+          expires_in: TOKEN_TTL
+        });
+      }
+
+      if (url.pathname === "/live.m3u8") {
         const token = url.searchParams.get("token");
 
         if (!token) {
-          return new Response("ERROR: token missing", {
-            status: 401
-          });
+          return textResponse("Token missing", 403);
         }
 
-        if (!await verifyToken(token, env.SECRET)) {
-          return new Response("ERROR: token expired/invalid", {
-            status: 403
-          });
-        }
+        const valid = await verifyToken(
+          token,
+          env.STREAM_SECRET
+        );
 
-        // ==========================================
-        // নিজের অনুমোদিত HLS URL এখানে বসাবে
-        // ==========================================
-        const HLS_ORIGIN = env.HLS_ORIGIN;
-
-        if (!HLS_ORIGIN) {
-          return new Response(
-            "ERROR: HLS_ORIGIN is not configured",
-            { status: 500 }
+        if (!valid) {
+          return textResponse(
+            "Token expired or invalid",
+            403
           );
         }
 
-        const response = await fetch(HLS_ORIGIN, {
-          headers: {
-            "User-Agent": "Mozilla/5.0",
-            "Accept": "*/*"
-          }
-        });
-
-        if (!response.ok) {
-          return new Response(
-            `Origin error: ${response.status}`,
-            { status: 502 }
-          );
-        }
-
-        return new Response(response.body, {
-          status: 200,
-          headers: {
-            "Content-Type":
-              response.headers.get("Content-Type") ||
-              "application/vnd.apple.mpegurl",
-
-            "Cache-Control": "no-store",
-            "Access-Control-Allow-Origin": "*"
-          }
-        });
+        return await getPlaylist(
+          UPSTREAM_M3U8,
+          token,
+          url.origin,
+          env.STREAM_SECRET
+        );
       }
 
-      return new Response("Not Found", {
-        status: 404
-      });
+      if (url.pathname === "/hls") {
+        const token = url.searchParams.get("token");
+        const encrypted = url.searchParams.get("p");
+
+        if (!token || !encrypted) {
+          return textResponse(
+            "Missing parameters",
+            403
+          );
+        }
+
+        const valid = await verifyToken(
+          token,
+          env.STREAM_SECRET
+        );
+
+        if (!valid) {
+          return textResponse(
+            "Token expired or invalid",
+            403
+          );
+        }
+
+        let targetUrl;
+
+        try {
+          targetUrl = await decryptTarget(
+            encrypted,
+            env.STREAM_SECRET
+          );
+        } catch (error) {
+          return textResponse(
+            "Invalid target",
+            403
+          );
+        }
+
+        let target;
+
+        try {
+          target = new URL(targetUrl);
+        } catch (error) {
+          return textResponse(
+            "Invalid URL",
+            400
+          );
+        }
+
+        if (
+          target.protocol !== "https:" ||
+          target.hostname !== UPSTREAM_HOST
+        ) {
+          return textResponse(
+            "Host not allowed",
+            403
+          );
+        }
+
+        const response = await fetch(
+          target.toString(),
+          {
+            method: "GET",
+            headers: {
+              "User-Agent":
+                "Mozilla/5.0 HLS-Proxy"
+            },
+            cf: {
+              cacheTtl: 0,
+              cacheEverything: false
+            }
+          }
+        );
+
+        if (!response.ok) {
+          return textResponse(
+            `Upstream error: ${response.status}`,
+            response.status
+          );
+        }
+
+        const contentType =
+          response.headers.get(
+            "content-type"
+          ) || "";
+
+        const isPlaylist =
+          contentType.includes(
+            "mpegurl"
+          ) ||
+          target.pathname.endsWith(
+            ".m3u8"
+          ) ||
+          target.pathname.endsWith(
+            ".m3u"
+          );
+
+        if (isPlaylist) {
+          const text =
+            await response.text();
+
+          const rewritten =
+            await rewritePlaylist(
+              text,
+              target,
+              token,
+              env.STREAM_SECRET,
+              url.origin
+            );
+
+          return new Response(
+            rewritten,
+            {
+              status: 200,
+              headers: {
+                ...corsHeaders(),
+                "Content-Type":
+                  "application/vnd.apple.mpegurl",
+                "Cache-Control":
+                  "no-store, no-cache, must-revalidate"
+              }
+            }
+          );
+        }
+
+        return new Response(
+          response.body,
+          {
+            status: response.status,
+            headers: {
+              ...corsHeaders(),
+              "Content-Type":
+                contentType ||
+                "application/octet-stream",
+              "Cache-Control":
+                "no-store, no-cache, must-revalidate"
+            }
+          }
+        );
+      }
+
+      return textResponse(
+        "Not found",
+        404
+      );
 
     } catch (error) {
-      return new Response(
-        "Worker Error: " + error.message,
-        { status: 500 }
+      return jsonResponse(
+        {
+          error:
+            "Internal Server Error",
+          message:
+            error.message
+        },
+        500
       );
     }
   }
 };
 
 
-// ======================================
-// HMAC TOKEN
-// ======================================
+// ========================================
+// GET PLAYLIST
+// ========================================
 
-async function createToken(exp, secret) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
+async function getPlaylist(
+  playlistUrl,
+  token,
+  origin,
+  secret
+) {
+  const response =
+    await fetch(
+      playlistUrl,
+      {
+        method: "GET",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 HLS-Proxy"
+        },
+        cf: {
+          cacheTtl: 0,
+          cacheEverything: false
+        }
+      }
+    );
+
+  if (!response.ok) {
+    return textResponse(
+      `Upstream playlist error: ${response.status}`,
+      response.status
+    );
+  }
+
+  const text =
+    await response.text();
+
+  const rewritten =
+    await rewritePlaylist(
+      text,
+      new URL(playlistUrl),
+      token,
+      secret,
+      origin
+    );
+
+  return new Response(
+    rewritten,
     {
-      name: "HMAC",
-      hash: "SHA-256"
-    },
-    false,
-    ["sign"]
+      status: 200,
+      headers: {
+        ...corsHeaders(),
+        "Content-Type":
+          "application/vnd.apple.mpegurl",
+        "Cache-Control":
+          "no-store, no-cache, must-revalidate"
+      }
+    }
   );
-
-  const signature = await crypto.subtle.sign(
-    "HMAC",
-    key,
-    new TextEncoder().encode(String(exp))
-  );
-
-  return `${exp}.${base64url(signature)}`;
 }
 
 
-async function verifyToken(token, secret) {
-  try {
-    const parts = token.split(".");
+// ========================================
+// REWRITE PLAYLIST
+// ========================================
 
-    if (parts.length !== 2) return false;
+async function rewritePlaylist(
+  text,
+  baseUrl,
+  token,
+  secret,
+  origin
+) {
+  let result = text;
 
-    const exp = Number(parts[0]);
+  // URI="..."
+  const matches = [
+    ...text.matchAll(
+      /URI="([^"]+)"/g
+    )
+  ];
 
-    if (!Number.isFinite(exp)) return false;
+  for (const match of matches) {
+    const original =
+      match[1];
 
-    if (Math.floor(Date.now() / 1000) >= exp) {
-      return false;
+    try {
+      const absolute =
+        new URL(
+          original,
+          baseUrl
+        ).toString();
+
+      if (
+        isAllowedHost(
+          absolute
+        )
+      ) {
+        const proxyUrl =
+          await makeProxyUrl(
+            absolute,
+            token,
+            secret,
+            origin
+          );
+
+        result =
+          result.replace(
+            `URI="${original}"`,
+            `URI="${proxyUrl}"`
+          );
+      }
+    } catch (error) {
+      // Ignore invalid URI
+    }
+  }
+
+  // Normal HLS URLs
+  const lines =
+    result.split("\n");
+
+  for (
+    let i = 0;
+    i < lines.length;
+    i++
+  ) {
+    const line =
+      lines[i].trim();
+
+    if (
+      !line ||
+      line.startsWith("#")
+    ) {
+      continue;
     }
 
-    const expected = await createToken(exp, secret);
+    try {
+      const absolute =
+        new URL(
+          line,
+          baseUrl
+        ).toString();
 
-    return timingSafeEqual(token, expected);
+      if (
+        isAllowedHost(
+          absolute
+        )
+      ) {
+        lines[i] =
+          await makeProxyUrl(
+            absolute,
+            token,
+            secret,
+            origin
+          );
+      }
+    } catch (error) {
+      // Ignore invalid URL
+    }
+  }
 
-  } catch {
+  return lines.join("\n");
+}
+
+
+// ========================================
+// MAKE PROXY URL
+// ========================================
+
+async function makeProxyUrl(
+  target,
+  token,
+  secret,
+  origin
+) {
+  const encrypted =
+    await encryptTarget(
+      target,
+      secret
+    );
+
+  return (
+    `${origin}/hls?token=` +
+    `${encodeURIComponent(token)}` +
+    `&p=${encodeURIComponent(encrypted)}`
+  );
+}
+
+
+// ========================================
+// HOST CHECK
+// ========================================
+
+function isAllowedHost(
+  targetUrl
+) {
+  try {
+    const url =
+      new URL(targetUrl);
+
+    return (
+      url.protocol === "https:" &&
+      url.hostname ===
+        UPSTREAM_HOST
+    );
+
+  } catch (error) {
     return false;
   }
 }
 
 
-function base64url(buffer) {
-  let binary = "";
+// ========================================
+// CREATE TOKEN
+// ========================================
 
-  for (const byte of new Uint8Array(buffer)) {
-    binary += String.fromCharCode(byte);
-  }
+async function createToken(
+  secret
+) {
+  const expires =
+    Math.floor(
+      Date.now() / 1000
+    ) + TOKEN_TTL;
 
-  return btoa(binary)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+  const signature =
+    await hmacSign(
+      String(expires),
+      secret
+    );
+
+  return (
+    `${expires}.${signature}`
+  );
 }
 
 
-function timingSafeEqual(a, b) {
-  if (a.length !== b.length) return false;
+// ========================================
+// VERIFY TOKEN
+// ========================================
+
+async function verifyToken(
+  token,
+  secret
+) {
+  try {
+    const parts =
+      token.split(".");
+
+    if (
+      parts.length !== 2
+    ) {
+      return false;
+    }
+
+    const expires =
+      Number(parts[0]);
+
+    if (
+      !Number.isFinite(
+        expires
+      )
+    ) {
+      return false;
+    }
+
+    const now =
+      Math.floor(
+        Date.now() / 1000
+      );
+
+    if (expires < now) {
+      return false;
+    }
+
+    const expected =
+      await hmacSign(
+        String(expires),
+        secret
+      );
+
+    return timingSafeEqual(
+      parts[1],
+      expected
+    );
+
+  } catch (error) {
+    return false;
+  }
+}
+
+
+// ========================================
+// HMAC SHA-256
+// ========================================
+
+async function hmacSign(
+  message,
+  secret
+) {
+  const encoder =
+    new TextEncoder();
+
+  const key =
+    await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(secret),
+      {
+        name: "HMAC",
+        hash: "SHA-256"
+      },
+      false,
+      ["sign"]
+    );
+
+  const signature =
+    await crypto.subtle.sign(
+      "HMAC",
+      key,
+      encoder.encode(message)
+    );
+
+  return arrayBufferToBase64Url(
+    signature
+  );
+}
+
+
+// ========================================
+// ENCRYPT TARGET
+// ========================================
+
+async function encryptTarget(
+  text,
+  secret
+) {
+  const key =
+    await deriveAESKey(
+      secret
+    );
+
+  const iv =
+    crypto.getRandomValues(
+      new Uint8Array(12)
+    );
+
+  const encrypted =
+    await crypto.subtle.encrypt(
+      {
+        name: "AES-GCM",
+        iv: iv
+      },
+      key,
+      new TextEncoder().encode(
+        text
+      )
+    );
+
+  const result =
+    new Uint8Array(
+      12 +
+      encrypted.byteLength
+    );
+
+  result.set(
+    iv,
+    0
+  );
+
+  result.set(
+    new Uint8Array(
+      encrypted
+    ),
+    12
+  );
+
+  return arrayBufferToBase64Url(
+    result.buffer
+  );
+}
+
+
+// ========================================
+// DECRYPT TARGET
+// ========================================
+
+async function decryptTarget(
+  encoded,
+  secret
+) {
+  const key =
+    await deriveAESKey(
+      secret
+    );
+
+  const data =
+    base64UrlToUint8Array(
+      encoded
+    );
+
+  if (
+    data.length < 13
+  ) {
+    throw new Error(
+      "Invalid encrypted data"
+    );
+  }
+
+  const iv =
+    data.slice(
+      0,
+      12
+    );
+
+  const encrypted =
+    data.slice(
+      12
+    );
+
+  const decrypted =
+    await crypto.subtle.decrypt(
+      {
+        name: "AES-GCM",
+        iv: iv
+      },
+      key,
+      encrypted
+    );
+
+  return new TextDecoder()
+    .decode(
+      decrypted
+    );
+}
+
+
+// ========================================
+// AES KEY
+// ========================================
+
+async function deriveAESKey(
+  secret
+) {
+  const hash =
+    await crypto.subtle.digest(
+      "SHA-256",
+      new TextEncoder().encode(
+        secret
+      )
+    );
+
+  return crypto.subtle.importKey(
+    "raw",
+    hash,
+    {
+      name: "AES-GCM"
+    },
+    false,
+    [
+      "encrypt",
+      "decrypt"
+    ]
+  );
+}
+
+
+// ========================================
+// BASE64 URL ENCODE
+// ========================================
+
+function arrayBufferToBase64Url(
+  buffer
+) {
+  const bytes =
+    new Uint8Array(
+      buffer
+    );
+
+  let binary = "";
+
+  for (
+    let i = 0;
+    i < bytes.length;
+    i++
+  ) {
+    binary +=
+      String.fromCharCode(
+        bytes[i]
+      );
+  }
+
+  return btoa(binary)
+    .replace(
+      /\+/g,
+      "-"
+    )
+    .replace(
+      /\//g,
+      "_"
+    )
+    .replace(
+      /=+$/,
+      ""
+    );
+}
+
+
+// ========================================
+// BASE64 URL DECODE
+// ========================================
+
+function base64UrlToUint8Array(
+  input
+) {
+  let base64 =
+    input
+      .replace(
+        /-/g,
+        "+"
+      )
+      .replace(
+        /_/g,
+        "/"
+      );
+
+  while (
+    base64.length % 4
+  ) {
+    base64 += "=";
+  }
+
+  const binary =
+    atob(base64);
+
+  const bytes =
+    new Uint8Array(
+      binary.length
+    );
+
+  for (
+    let i = 0;
+    i < binary.length;
+    i++
+  ) {
+    bytes[i] =
+      binary.charCodeAt(i);
+  }
+
+  return bytes;
+}
+
+
+// ========================================
+// TIMING SAFE EQUAL
+// ========================================
+
+function timingSafeEqual(
+  a,
+  b
+) {
+  if (
+    typeof a !== "string" ||
+    typeof b !== "string"
+  ) {
+    return false;
+  }
+
+  if (
+    a.length !== b.length
+  ) {
+    return false;
+  }
 
   let result = 0;
 
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  for (
+    let i = 0;
+    i < a.length;
+    i++
+  ) {
+    result |=
+      a.charCodeAt(i) ^
+      b.charCodeAt(i);
   }
 
   return result === 0;
+}
+
+
+// ========================================
+// CORS
+// ========================================
+
+function corsHeaders() {
+  return {
+    "Access-Control-Allow-Origin":
+      "*",
+    "Access-Control-Allow-Methods":
+      "GET, HEAD, OPTIONS",
+    "Access-Control-Allow-Headers":
+      "Content-Type, Authorization",
+    "Access-Control-Expose-Headers":
+      "Content-Length, Content-Type"
+  };
+}
+
+
+// ========================================
+// TEXT RESPONSE
+// ========================================
+
+function textResponse(
+  text,
+  status = 200
+) {
+  return new Response(
+    text,
+    {
+      status: status,
+      headers: {
+        ...corsHeaders(),
+        "Content-Type":
+          "text/plain; charset=utf-8",
+        "Cache-Control":
+          "no-store"
       }
+    }
+  );
+}
+
+
+// ========================================
+// JSON RESPONSE
+// ========================================
+
+function jsonResponse(
+  data,
+  status = 200
+) {
+  return new Response(
+    JSON.stringify(data),
+    {
+      status: status,
+      headers: {
+        ...corsHeaders(),
+        "Content-Type":
+          "application/json; charset=utf-8",
+        "Cache-Control":
+          "no-store"
+      }
+    }
+  );
+            }
