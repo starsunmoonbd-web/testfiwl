@@ -1,7 +1,7 @@
 const UPSTREAM_M3U8 =
-  "https://d1g8wgjurz8via.cloudfront.net/bpk-tv/ColorsHD/default/ColorsHD.m3u8";
+  "http://line.tivi-one.net/play/live.php?mac=00:1A:79:B4:54:0F&stream=737323&extension=.m3u8";
 
-const UPSTREAM_HOST = "d1g8wgjurz8via.cloudfront.net";
+const UPSTREAM_HOST = "http://line.tivi-one.net/play/live.php?mac=00:1A:79:B4:54:0F&stream=737323&extension=.m3u8";
 const TOKEN_TTL = 300;
 
 export default {
