@@ -1,5 +1,4 @@
-const UPSTREAM_M3U8 =
-  "liveline.bond";
+const UPSTREAM_HOST = "https://liveline.bond";
 
 const UPSTREAM_HOST = "https://liveline.bond/st/live.php?id=11154&e=.m3u8";
 const TOKEN_TTL = 300;
