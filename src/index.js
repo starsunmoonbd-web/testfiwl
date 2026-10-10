@@ -1,7 +1,7 @@
 const UPSTREAM_M3U8 =
   "https://liveline.bond/st/live.php?id=11154&e=.m3u8";
 
-const UPSTREAM_HOST = "https://fifabangladesh.top/tvdx/play.php?id=908680&e=.m3u8";
+const UPSTREAM_HOST = "https://liveline.bond/st/live.php?id=11154&e=.m3u8";
 const TOKEN_TTL = 300;
 
 export default {
