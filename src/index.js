@@ -15,39 +15,26 @@ export default {
     }
 
     if (url.pathname === "/") {
-      return new Response(getPlayerHTML(), {
+      return new Response(playerHTML(), {
         headers: {
-          "Content-Type": "text/html; charset=UTF-8",
+          "Content-Type": "text/html; charset=utf-8",
           "Cache-Control": "no-store"
         }
       });
     }
 
     if (url.pathname === "/playlist.m3u8") {
-      return handleStream(STREAM_URL);
+      return streamResponse(STREAM_URL);
     }
 
     if (url.pathname === "/resource") {
-      const resource = url.searchParams.get("url");
+      const value = url.searchParams.get("url");
 
-      if (!resource) {
-        return new Response("Missing resource URL", {
-          status: 400,
-          headers: corsHeaders()
-        });
+      if (!value) {
+        return textResponse("Missing resource URL", 400);
       }
 
       let target;
 
       try {
-        target = new URL(resource);
-      } catch {
-        return new Response("Invalid resource URL", {
-          status: 400,
-          headers: corsHeaders()
-        });
-      }
-
-      if (
-        target.protocol !== "https:" ||
-        target.hostname !== ALLOWED_HOST
+        target =
