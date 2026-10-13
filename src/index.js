@@ -1,136 +1,65 @@
-const STREAM_URL = "https://prod-linear-media.toffeelive.com/cdn/live/independent_tv/playlist.m3u8?edge-cache-token=Expires=1791903752~Starts=1791900152~URLPrefix=aHR0cHM6Ly9wcm9kLWxpbmVhci1tZWRpYS50b2ZmZWVsaXZlLmNvbQ~Data=eyJzdWJzY3JpYmVyX2lkIjoiMmYyNmEyZmYtODRkYS00NzRiLWJiN2EtMjFlY2VhZTIyNDBmIn0~Signature=NK8zf151RLZn8nhR6cy1rIKn9_7ffXE06QpM9ljXUutjtUy4XQtMFRizX1RYYcBYHXJeeyCshtPZgfwDbndhAg";
+const STREAM_URL = "https://prod-linear-media.toffeelive.com/cdn/live/dw_tv/playlist.m3u8?edge-cache-token=Expires=1791907312~Starts=1791903712~URLPrefix=aHR0cHM6Ly9wcm9kLWxpbmVhci1tZWRpYS50b2ZmZWVsaXZlLmNvbQ~Data=eyJzdWJzY3JpYmVyX2lkIjoiMmYyNmEyZmYtODRkYS00NzRiLWJiN2EtMjFlY2VhZTIyNDBmIn0~Signature=B-KbE81E7wF4HM_Jvfx_NIXLN-gGtLpoivp6PrQGr5aUQqan6zDcgd3IcH5bsrBbdDLFiRbKJnbc2e5g2AyTCA";
 
-const ALLOWED_HOST = "prod-linear-media.toffeelive.com";
+const HOST = "prod-linear-media.toffeelive.com";
 
 export default {
   async fetch(request) {
-    const incoming = new URL(request.url);
+    const url = new URL(request.url);
 
-    if (incoming.pathname === "/") {
+    if (url.pathname === "/") {
       return new Response(
         `<!DOCTYPE html>
 <html>
 <head>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Independent TV</title>
+<title>DW TV</title>
 <style>
-body{margin:0;background:#000;color:white;font-family:Arial}
+body{margin:0;background:#000}
 video{width:100%;height:100vh;background:#000}
 </style>
 </head>
 <body>
-<video id="player" controls autoplay playsinline></video>
+<video controls autoplay playsinline></video>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 <script>
-document.getElementById("player").src="/playlist.m3u8";
+const video=document.querySelector("video");
+const source="/playlist.m3u8";
+if(video.canPlayType("application/vnd.apple.mpegurl")){
+ video.src=source;
+}else if(Hls.isSupported()){
+ const hls=new Hls();
+ hls.loadSource(source);
+ hls.attachMedia(video);
+ hls.on(Hls.Events.ERROR,(_,data)=>{
+   console.log("HLS error:",data);
+ });
+}else{
+ document.body.innerHTML="HLS is not supported in this browser";
+}
 </script>
 </body>
 </html>`,
         {
           headers: {
-            "Content-Type": "text/html; charset=utf-8",
+            "Content-Type": "text/html;charset=UTF-8",
             "Cache-Control": "no-store"
           }
         }
       );
     }
 
-    if (
-      incoming.pathname !== "/playlist.m3u8" &&
-      incoming.pathname !== "/segment"
-    ) {
-      return new Response("Not found", { status: 404 });
-    }
-
     let target;
 
-    if (incoming.pathname === "/playlist.m3u8") {
+    if (url.pathname === "/playlist.m3u8") {
       target = new URL(STREAM_URL);
-    } else {
-      const raw = incoming.searchParams.get("url");
+    } else if (url.pathname === "/segment") {
+      const value = url.searchParams.get("url");
 
-      if (!raw) {
+      if (!value) {
         return new Response("Missing URL", { status: 400 });
       }
 
       try {
-        target = new URL(raw);
+        target = new URL(value);
       } catch {
-        return new Response("Invalid URL", { status: 400 });
-      }
-    }
-
-    if (
-      target.protocol !== "https:" ||
-      target.hostname !== ALLOWED_HOST
-    ) {
-      return new Response("URL not allowed", { status: 403 });
-    }
-
-    try {
-      const response = await fetch(target.toString(), {
-        headers: {
-          "User-Agent": "Mozilla/5.0",
-          "Accept": "*/*"
-        }
-      });
-
-      const contentType =
-        response.headers.get("Content-Type") ||
-        "application/vnd.apple.mpegurl";
-
-      let body = response.body;
-
-      if (
-        response.ok &&
-        target.pathname.endsWith(".m3u8")
-      ) {
-        const text = await response.text();
-
-        const rewritten = text
-          .split(/\r?\n/)
-          .map(line => {
-            const value = line.trim();
-
-            if (!value || value.startsWith("#")) {
-              return line;
-            }
-
-            let absolute;
-
-            try {
-              absolute = new URL(value, target);
-            } catch {
-              return line;
-            }
-
-            if (
-              absolute.protocol !== "https:" ||
-              absolute.hostname !== ALLOWED_HOST
-            ) {
-              return line;
-            }
-
-            return "/segment?url=" +
-              encodeURIComponent(absolute.toString());
-          })
-          .join("\n");
-
-        body = rewritten;
-      }
-
-      return new Response(body, {
-        status: response.status,
-        headers: {
-          "Content-Type": contentType,
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "no-store"
-        }
-      });
-    } catch {
-      return new Response(
-        "Upstream request failed",
-        { status: 502 }
-      );
-    }
-  }
-};
+        return new Response("Invalid URL", {
